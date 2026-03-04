@@ -233,7 +233,7 @@
                 const imageData = zxingCtx.getImageData(0, 0, zxingCanvas.width, zxingCanvas.height);
 
                 // ★エンジン部分だけを ZXing から カスタム jsQR (マルチリード) に差し替え
-                const rawItems = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth", extractRawOnly: true, multi: true });
+                const rawItems = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert", extractRawOnly: true, multi: true });
 
                 let needsPassword = false;
 

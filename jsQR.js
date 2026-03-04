@@ -10044,7 +10044,7 @@ function locate(matrix) {
     // ★ 改良点：QRツインの密集したマーク群から、正しい3つだけを幾何学的に抽出する
     // ▼▼ src/locator/index.ts の下部を上書き ▼▼
     // ★ 候補を少し増やして、見落としを防ぐ
-    var topFinderPatterns = validFinderPatterns.slice(0, 20);
+    var topFinderPatterns = validFinderPatterns.slice(0, 10);
     var finderPatternGroups = [];
     var len = topFinderPatterns.length;
     for (var i = 0; i < len - 2; i++) {
@@ -10053,10 +10053,10 @@ function locate(matrix) {
                 var p1 = topFinderPatterns[i];
                 var p2 = topFinderPatterns[j];
                 var p3 = topFinderPatterns[k];
-                // ① サイズのチェック（ピンボケを考慮して許容範囲を 0.5 -> 1.0 に緩和）
+                // ① サイズのチェック（0.6: 多少の遠近感は許容しつつ、違うマークは弾く）
                 var sizeAvg = (p1.size + p2.size + p3.size) / 3;
                 var sizeErr = (Math.abs(p1.size - sizeAvg) + Math.abs(p2.size - sizeAvg) + Math.abs(p3.size - sizeAvg)) / sizeAvg;
-                if (sizeErr > 1.0)
+                if (sizeErr > 0.6)
                     continue;
                 // ② 配置のチェック
                 var _a = reorderFinderPatterns(p1, p2, p3), topRight = _a.topRight, topLeft = _a.topLeft, bottomLeft = _a.bottomLeft;
@@ -10065,17 +10065,17 @@ function locate(matrix) {
                 var diag = distance(topRight, bottomLeft);
                 if (topSide === 0 || leftSide === 0)
                     continue;
-                // ★ 縦と横の長さの比率（スマホを斜めに構えた時の歪みを考慮し、0.4 〜 2.5 と大幅に緩和）
+                // ★ 縦と横の長さの比率（0.7 〜 1.4 の「適度な厳しさ」に戻す）
                 var ratio = topSide / leftSide;
-                if (ratio < 0.4 || ratio > 2.5)
+                if (ratio < 0.7 || ratio > 1.4)
                     continue;
-                // ★ 直角かどうか（これも斜め撮影を考慮して 0.4 〜 2.5 に緩和）
+                // ★ 直角かどうか（0.7 〜 1.4）
                 var angleRatio = (diag * diag) / (topSide * topSide + leftSide * leftSide);
-                if (angleRatio < 0.4 || angleRatio > 2.5)
+                if (angleRatio < 0.7 || angleRatio > 1.4)
                     continue;
-                // 幾何学的な「歪み」のペナルティを軽くし、多少歪んでいてもデコード処理へ回す（50 -> 10）
+                // 幾何学的な「歪み」のペナルティ
                 var geoErr = Math.abs(1 - ratio) + Math.abs(1 - angleRatio);
-                var totalScore = p1.score + p2.score + p3.score + geoErr * 10;
+                var totalScore = p1.score + p2.score + p3.score + geoErr * 20;
                 finderPatternGroups.push({ points: [p1, p2, p3], score: totalScore });
             }
         }
@@ -10085,8 +10085,8 @@ function locate(matrix) {
         return null;
     }
     var result = [];
-    // ★ 歪んだQRも拾えるように、処理に回すグループ数を増やす（6 -> 10）
-    var groupsToProcess = finderPatternGroups.slice(0, 10);
+    // ★ デコード処理に回すのは、最も形が綺麗な「上位4セット」のみに限定（QRは最大2つなので4つで十分）
+    var groupsToProcess = finderPatternGroups.slice(0, 4);
     for (var _i = 0, groupsToProcess_1 = groupsToProcess; _i < groupsToProcess_1.length; _i++) {
         var group = groupsToProcess_1[_i];
         var _b = reorderFinderPatterns(group.points[0], group.points[1], group.points[2]), topRight = _b.topRight, topLeft = _b.topLeft, bottomLeft = _b.bottomLeft;
