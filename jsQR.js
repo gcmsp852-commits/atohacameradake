@@ -10042,7 +10042,9 @@ function locate(matrix) {
         .filter(function (q) { return !!q; })
         .sort(function (a, b) { return a.score - b.score; });
     // ★ 改良点：QRツインの密集したマーク群から、正しい3つだけを幾何学的に抽出する
-    var topFinderPatterns = validFinderPatterns.slice(0, 15);
+    // ▼▼ src/locator/index.ts の下部を上書き ▼▼
+    // ★ 候補を少し増やして、見落としを防ぐ
+    var topFinderPatterns = validFinderPatterns.slice(0, 20);
     var finderPatternGroups = [];
     var len = topFinderPatterns.length;
     for (var i = 0; i < len - 2; i++) {
@@ -10051,29 +10053,29 @@ function locate(matrix) {
                 var p1 = topFinderPatterns[i];
                 var p2 = topFinderPatterns[j];
                 var p3 = topFinderPatterns[k];
-                // ① 3つのマークのサイズが近しいか？（違うQRのマークを混ぜていないか）
+                // ① サイズのチェック（ピンボケを考慮して許容範囲を 0.5 -> 1.0 に緩和）
                 var sizeAvg = (p1.size + p2.size + p3.size) / 3;
                 var sizeErr = (Math.abs(p1.size - sizeAvg) + Math.abs(p2.size - sizeAvg) + Math.abs(p3.size - sizeAvg)) / sizeAvg;
-                if (sizeErr > 0.5)
+                if (sizeErr > 1.0)
                     continue;
-                // ② 配置が直角二等辺三角形に近いか？
+                // ② 配置のチェック
                 var _a = reorderFinderPatterns(p1, p2, p3), topRight = _a.topRight, topLeft = _a.topLeft, bottomLeft = _a.bottomLeft;
                 var topSide = distance(topLeft, topRight);
                 var leftSide = distance(topLeft, bottomLeft);
                 var diag = distance(topRight, bottomLeft);
                 if (topSide === 0 || leftSide === 0)
                     continue;
-                // 縦と横の長さの比率
+                // ★ 縦と横の長さの比率（スマホを斜めに構えた時の歪みを考慮し、0.4 〜 2.5 と大幅に緩和）
                 var ratio = topSide / leftSide;
-                if (ratio < 0.6 || ratio > 1.6)
+                if (ratio < 0.4 || ratio > 2.5)
                     continue;
-                // 直角かどうか（ピタゴラスの定理を利用）
+                // ★ 直角かどうか（これも斜め撮影を考慮して 0.4 〜 2.5 に緩和）
                 var angleRatio = (diag * diag) / (topSide * topSide + leftSide * leftSide);
-                if (angleRatio < 0.6 || angleRatio > 1.6)
+                if (angleRatio < 0.4 || angleRatio > 2.5)
                     continue;
-                // 幾何学的な「歪みの少なさ」をスコアに加算（形が綺麗なものほど優先）
+                // 幾何学的な「歪み」のペナルティを軽くし、多少歪んでいてもデコード処理へ回す（50 -> 10）
                 var geoErr = Math.abs(1 - ratio) + Math.abs(1 - angleRatio);
-                var totalScore = p1.score + p2.score + p3.score + geoErr * 50;
+                var totalScore = p1.score + p2.score + p3.score + geoErr * 10;
                 finderPatternGroups.push({ points: [p1, p2, p3], score: totalScore });
             }
         }
@@ -10083,8 +10085,8 @@ function locate(matrix) {
         return null;
     }
     var result = [];
-    // ★ 無駄なデコード処理を省くため、形が綺麗な上位6セットだけに絞る
-    var groupsToProcess = finderPatternGroups.slice(0, 6);
+    // ★ 歪んだQRも拾えるように、処理に回すグループ数を増やす（6 -> 10）
+    var groupsToProcess = finderPatternGroups.slice(0, 10);
     for (var _i = 0, groupsToProcess_1 = groupsToProcess; _i < groupsToProcess_1.length; _i++) {
         var group = groupsToProcess_1[_i];
         var _b = reorderFinderPatterns(group.points[0], group.points[1], group.points[2]), topRight = _b.topRight, topLeft = _b.topLeft, bottomLeft = _b.bottomLeft;
@@ -10118,6 +10120,7 @@ function locate(matrix) {
     return result;
 }
 exports.locate = locate;
+// ※これより下の findAlignmentPattern 関数はそのまま残してください
 function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft) {
     var _a;
     var dimension;
