@@ -395,17 +395,12 @@ function scan(matrix, options) {
 var defaultOptions = { inversionAttempts: "attemptBoth" };
 function jsQR(data, width, height, providedOptions) {
     if (providedOptions === void 0) { providedOptions = {}; }
-var mask = providedOptions.appEncMask;
-if (mask && !(mask instanceof Uint8Array) && !(mask instanceof Uint8ClampedArray)) {
-  // ★1回だけTyped化（毎フレームここに来るなら、呼び出し側でTypedを渡すのがベスト）
-  mask = Uint8Array.from(mask);
-}
-var options = {
-  inversionAttempts: providedOptions.inversionAttempts || defaultOptions.inversionAttempts,
-  appEncMask: mask,
-  extractRawOnly: providedOptions.extractRawOnly,
-  multi: providedOptions.multi
-};
+    var options = {
+        inversionAttempts: providedOptions.inversionAttempts || defaultOptions.inversionAttempts,
+        appEncMask: providedOptions.appEncMask,
+        extractRawOnly: providedOptions.extractRawOnly,
+        multi: providedOptions.multi
+    };
     var shouldInvert = options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst";
     var tryInvertedFirst = options.inversionAttempts === "onlyInvert" || options.inversionAttempts === "invertFirst";
     var _a = binarizer_1.binarize(data, width, height, shouldInvert), binarized = _a.binarized, inverted = _a.inverted;
@@ -463,112 +458,96 @@ var Matrix = /** @class */ (function () {
     return Matrix;
 }());
 function binarize(data, width, height, returnInverted) {
-  if (data.length !== width * height * 4) {
-    throw new Error("Malformed data passed to binarizer.");
-  }
-
-  // Matrix を使うが、get/set を極力使わず data 直叩きする
-  var greyscalePixels = new Matrix(width, height);
-  var g = greyscalePixels.data;
-
-  // ★高速化1：y外側で連続アクセス（キャッシュに優しい）
-  for (var y = 0; y < height; y++) {
-    var row = y * width;
-    var idx = row * 4;
+    if (data.length !== width * height * 4) {
+        throw new Error("Malformed data passed to binarizer.");
+    }
+    // Convert image to greyscale
+    var greyscalePixels = new Matrix(width, height);
     for (var x = 0; x < width; x++) {
-      var r = data[idx];
-      var gg = data[idx + 1];
-      var b = data[idx + 2];
-      // 近似輝度（元コードと同等の扱いでOKならこのまま）
-      // ※厳密にしたいなら係数付きにしても良いが、まずは速度優先
-      g[row + x] = (r + gg + b) / 3;
-      idx += 4;
-    }
-  }
-
-  // REGION計算は元ロジックを維持（ここは構造変更するとバグりやすいので最小改造）
-  var REGION_SIZE = 8;
-  var horizontalRegionCount = Math.ceil(width / REGION_SIZE);
-  var verticalRegionCount = Math.ceil(height / REGION_SIZE);
-
-  var blackPoints = new Matrix(horizontalRegionCount, verticalRegionCount);
-  var bp = blackPoints.data;
-
-  // blackPoints算出（元の計算に準じる）
-  for (var yRegion = 0; yRegion < verticalRegionCount; yRegion++) {
-    for (var xRegion = 0; xRegion < horizontalRegionCount; xRegion++) {
-      var sum = 0;
-      var min = 255;
-      var max = 0;
-
-      var startX = xRegion * REGION_SIZE;
-      var startY = yRegion * REGION_SIZE;
-      var endX = Math.min(startX + REGION_SIZE, width);
-      var endY = Math.min(startY + REGION_SIZE, height);
-
-      for (var y = startY; y < endY; y++) {
-        var row = y * width;
-        for (var x = startX; x < endX; x++) {
-          var lum = g[row + x];
-          sum += lum;
-          if (lum < min) min = lum;
-          if (lum > max) max = lum;
+        for (var y = 0; y < height; y++) {
+            var r = data[((y * width + x) * 4) + 0];
+            var g = data[((y * width + x) * 4) + 1];
+            var b = data[((y * width + x) * 4) + 2];
+            greyscalePixels.set(x, y, 0.2126 * r + 0.7152 * g + 0.0722 * b);
         }
-      }
-
-      // 元ロジックに近い閾値決定（コントラストが低い領域の扱い）
-      var avg = sum / ((endX - startX) * (endY - startY));
-      if (max - min <= 24) {
-        // 低コントラストは白寄りに逃がす（元のjsQR系と同様の思想）
-        bp[yRegion * horizontalRegionCount + xRegion] = Math.max(avg - 10, 0);
-      } else {
-        bp[yRegion * horizontalRegionCount + xRegion] = avg;
-      }
     }
-  }
-
-  var binarized = new BitMatrix(width, height);
-  var bdata = binarized.data;
-
-  var inverted, idata;
-  if (returnInverted) {
-    inverted = new BitMatrix(width, height);
-    idata = inverted.data;
-  }
-
-  // ★高速化2：get/setを使わず配列へ直書き
-  for (var yRegion = 0; yRegion < verticalRegionCount; yRegion++) {
-    for (var xRegion = 0; xRegion < horizontalRegionCount; xRegion++) {
-      var left = numBetween(xRegion, 2, horizontalRegionCount - 3);
-      var top = numBetween(yRegion, 2, verticalRegionCount - 3);
-
-      var sumT = 0;
-      for (var dy = -2; dy <= 2; dy++) {
-        var base = (top + dy) * horizontalRegionCount + (left - 2);
-        sumT += bp[base] + bp[base + 1] + bp[base + 2] + bp[base + 3] + bp[base + 4];
-      }
-      var threshold = sumT / 25;
-
-      var startX = xRegion * REGION_SIZE;
-      var startY = yRegion * REGION_SIZE;
-      var endX = Math.min(startX + REGION_SIZE, width);
-      var endY = Math.min(startY + REGION_SIZE, height);
-
-      for (var y = startY; y < endY; y++) {
-        var row = y * width;
-        for (var x = startX; x < endX; x++) {
-          var lum = g[row + x];
-          var v = lum <= threshold;
-          bdata[row + x] = v ? 1 : 0;
-          if (returnInverted) idata[row + x] = v ? 0 : 1;
+    var horizontalRegionCount = Math.ceil(width / REGION_SIZE);
+    var verticalRegionCount = Math.ceil(height / REGION_SIZE);
+    var blackPoints = new Matrix(horizontalRegionCount, verticalRegionCount);
+    for (var verticalRegion = 0; verticalRegion < verticalRegionCount; verticalRegion++) {
+        for (var hortizontalRegion = 0; hortizontalRegion < horizontalRegionCount; hortizontalRegion++) {
+            var sum = 0;
+            var min = Infinity;
+            var max = 0;
+            for (var y = 0; y < REGION_SIZE; y++) {
+                for (var x = 0; x < REGION_SIZE; x++) {
+                    var pixelLumosity = greyscalePixels.get(hortizontalRegion * REGION_SIZE + x, verticalRegion * REGION_SIZE + y);
+                    sum += pixelLumosity;
+                    min = Math.min(min, pixelLumosity);
+                    max = Math.max(max, pixelLumosity);
+                }
+            }
+            var average = sum / (Math.pow(REGION_SIZE, 2));
+            if (max - min <= MIN_DYNAMIC_RANGE) {
+                // If variation within the block is low, assume this is a block with only light or only
+                // dark pixels. In that case we do not want to use the average, as it would divide this
+                // low contrast area into black and white pixels, essentially creating data out of noise.
+                //
+                // Default the blackpoint for these blocks to be half the min - effectively white them out
+                average = min / 2;
+                if (verticalRegion > 0 && hortizontalRegion > 0) {
+                    // Correct the "white background" assumption for blocks that have neighbors by comparing
+                    // the pixels in this block to the previously calculated black points. This is based on
+                    // the fact that dark barcode symbology is always surrounded by some amount of light
+                    // background for which reasonable black point estimates were made. The bp estimated at
+                    // the boundaries is used for the interior.
+                    // The (min < bp) is arbitrary but works better than other heuristics that were tried.
+                    var averageNeighborBlackPoint = (blackPoints.get(hortizontalRegion, verticalRegion - 1) +
+                        (2 * blackPoints.get(hortizontalRegion - 1, verticalRegion)) +
+                        blackPoints.get(hortizontalRegion - 1, verticalRegion - 1)) / 4;
+                    if (min < averageNeighborBlackPoint) {
+                        average = averageNeighborBlackPoint;
+                    }
+                }
+            }
+            blackPoints.set(hortizontalRegion, verticalRegion, average);
         }
-      }
     }
-  }
-
-  if (returnInverted) return { binarized: binarized, inverted: inverted };
-  return { binarized: binarized };
-}exports.binarize = binarize;
+    var binarized = BitMatrix_1.BitMatrix.createEmpty(width, height);
+    var inverted = null;
+    if (returnInverted) {
+        inverted = BitMatrix_1.BitMatrix.createEmpty(width, height);
+    }
+    for (var verticalRegion = 0; verticalRegion < verticalRegionCount; verticalRegion++) {
+        for (var hortizontalRegion = 0; hortizontalRegion < horizontalRegionCount; hortizontalRegion++) {
+            var left = numBetween(hortizontalRegion, 2, horizontalRegionCount - 3);
+            var top_1 = numBetween(verticalRegion, 2, verticalRegionCount - 3);
+            var sum = 0;
+            for (var xRegion = -2; xRegion <= 2; xRegion++) {
+                for (var yRegion = -2; yRegion <= 2; yRegion++) {
+                    sum += blackPoints.get(left + xRegion, top_1 + yRegion);
+                }
+            }
+            var threshold = sum / 25;
+            for (var xRegion = 0; xRegion < REGION_SIZE; xRegion++) {
+                for (var yRegion = 0; yRegion < REGION_SIZE; yRegion++) {
+                    var x = hortizontalRegion * REGION_SIZE + xRegion;
+                    var y = verticalRegion * REGION_SIZE + yRegion;
+                    var lum = greyscalePixels.get(x, y);
+                    binarized.set(x, y, lum <= threshold);
+                    if (returnInverted) {
+                        inverted.set(x, y, !(lum <= threshold));
+                    }
+                }
+            }
+        }
+    }
+    if (returnInverted) {
+        return { binarized: binarized, inverted: inverted };
+    }
+    return { binarized: binarized };
+}
+exports.binarize = binarize;
 
 
 /***/ }),
@@ -897,25 +876,13 @@ function resumeDecode(rawData, appMask) {
     try {
         var codewords = rawData.codewords, version = rawData.version, formatInfo = rawData.formatInfo;
         // 元の配列を破壊しないようにコピーを作成
-        // 元の配列を破壊しないようにコピーを作成（TypedArray優先）
-var decryptedCodewords;
-if (codewords instanceof Uint8Array || codewords instanceof Uint8ClampedArray) {
-  decryptedCodewords = new Uint8Array(codewords); // ★高速コピー
-} else {
-  decryptedCodewords = Uint8Array.from(codewords); // ★通常配列でもTyped化
-}
-
-// 1. マスク（XOR）による暗号解除（maskもTypedArray前提で速く）
-if (appMask && appMask.length > 0) {
-  // appMask が普通配列ならここで1回だけUint8Array化（呼び出し側でやるのが理想）
-  var mask = (appMask instanceof Uint8Array || appMask instanceof Uint8ClampedArray) ? appMask : Uint8Array.from(appMask);
-
-  var n = decryptedCodewords.length;
-  var m = mask.length;
-  var lim = n < m ? n : m; // ★undefinedアクセスを避ける
-  for (var i = 0; i < lim; i++) decryptedCodewords[i] ^= mask[i];
-  // maskが短い/長い仕様があるならここに繰り返し等のルールを入れる
-}
+        var decryptedCodewords = codewords.slice();
+        // 1. マスク（XOR）による暗号解除
+        if (appMask && appMask.length > 0) {
+            for (var i = 0; i < decryptedCodewords.length; i++) {
+                decryptedCodewords[i] ^= appMask[i];
+            }
+        }
         // 2. ブロック分割＋インタリーブ解除
         var dataBlocks = getDataBlocks(decryptedCodewords, version, formatInfo.errorCorrectionLevel);
         if (!dataBlocks) {
@@ -10077,7 +10044,7 @@ function locate(matrix) {
     // ★ 改良点：QRツインの密集したマーク群から、正しい3つだけを幾何学的に抽出する
     // ▼▼ src/locator/index.ts の下部を上書き ▼▼
     // ★ 候補を少し増やして、見落としを防ぐ
-    var topFinderPatterns = validFinderPatterns.slice(0, 10);
+    var topFinderPatterns = validFinderPatterns.slice(0, 20);
     var finderPatternGroups = [];
     var len = topFinderPatterns.length;
     for (var i = 0; i < len - 2; i++) {
@@ -10086,10 +10053,10 @@ function locate(matrix) {
                 var p1 = topFinderPatterns[i];
                 var p2 = topFinderPatterns[j];
                 var p3 = topFinderPatterns[k];
-                // ① サイズのチェック（0.6: 多少の遠近感は許容しつつ、違うマークは弾く）
+                // ① サイズのチェック（ピンボケを考慮して許容範囲を 0.5 -> 1.0 に緩和）
                 var sizeAvg = (p1.size + p2.size + p3.size) / 3;
                 var sizeErr = (Math.abs(p1.size - sizeAvg) + Math.abs(p2.size - sizeAvg) + Math.abs(p3.size - sizeAvg)) / sizeAvg;
-                if (sizeErr > 0.6)
+                if (sizeErr > 1.0)
                     continue;
                 // ② 配置のチェック
                 var _a = reorderFinderPatterns(p1, p2, p3), topRight = _a.topRight, topLeft = _a.topLeft, bottomLeft = _a.bottomLeft;
@@ -10098,17 +10065,17 @@ function locate(matrix) {
                 var diag = distance(topRight, bottomLeft);
                 if (topSide === 0 || leftSide === 0)
                     continue;
-                // ★ 縦と横の長さの比率（0.7 〜 1.4 の「適度な厳しさ」に戻す）
+                // ★ 縦と横の長さの比率（スマホを斜めに構えた時の歪みを考慮し、0.4 〜 2.5 と大幅に緩和）
                 var ratio = topSide / leftSide;
-                if (ratio < 0.7 || ratio > 1.4)
+                if (ratio < 0.4 || ratio > 2.5)
                     continue;
-                // ★ 直角かどうか（0.7 〜 1.4）
+                // ★ 直角かどうか（これも斜め撮影を考慮して 0.4 〜 2.5 に緩和）
                 var angleRatio = (diag * diag) / (topSide * topSide + leftSide * leftSide);
-                if (angleRatio < 0.7 || angleRatio > 1.4)
+                if (angleRatio < 0.4 || angleRatio > 2.5)
                     continue;
-                // 幾何学的な「歪み」のペナルティ
+                // 幾何学的な「歪み」のペナルティを軽くし、多少歪んでいてもデコード処理へ回す（50 -> 10）
                 var geoErr = Math.abs(1 - ratio) + Math.abs(1 - angleRatio);
-                var totalScore = p1.score + p2.score + p3.score + geoErr * 20;
+                var totalScore = p1.score + p2.score + p3.score + geoErr * 10;
                 finderPatternGroups.push({ points: [p1, p2, p3], score: totalScore });
             }
         }
@@ -10118,8 +10085,8 @@ function locate(matrix) {
         return null;
     }
     var result = [];
-    // ★ デコード処理に回すのは、最も形が綺麗な「上位4セット」のみに限定（QRは最大2つなので4つで十分）
-    var groupsToProcess = finderPatternGroups.slice(0, 4);
+    // ★ 歪んだQRも拾えるように、処理に回すグループ数を増やす（6 -> 10）
+    var groupsToProcess = finderPatternGroups.slice(0, 10);
     for (var _i = 0, groupsToProcess_1 = groupsToProcess; _i < groupsToProcess_1.length; _i++) {
         var group = groupsToProcess_1[_i];
         var _b = reorderFinderPatterns(group.points[0], group.points[1], group.points[2]), topRight = _b.topRight, topLeft = _b.topLeft, bottomLeft = _b.bottomLeft;
