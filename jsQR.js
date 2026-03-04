@@ -333,22 +333,22 @@ var __assign = (this && this.__assign) || Object.assign || function(t) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 var binarizer_1 = __webpack_require__(4);
-// ★ require をやめて、ここで resumeDecode も一緒に読み込むように変更！
 var decoder_1 = __webpack_require__(5);
 var extractor_1 = __webpack_require__(11);
 var locator_1 = __webpack_require__(12);
 function scan(matrix, options) {
     var locations = locator_1.locate(matrix);
-    if (!locations) {
+    if (!locations)
         return null;
-    }
+    var results = []; // ★ 追加：結果を格納する配列
     for (var _i = 0, locations_1 = locations; _i < locations_1.length; _i++) {
         var location_1 = locations_1[_i];
         var extracted = extractor_1.extract(matrix, location_1);
         var decoded = decoder_1.decode(extracted.matrix, options);
         if (decoded) {
+            var res = void 0;
             if (options && options.extractRawOnly) {
-                return __assign({}, decoded, { location: {
+                res = __assign({}, decoded, { location: {
                         topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
                         topLeftCorner: extracted.mappingFunction(0, 0),
                         bottomRightCorner: extracted.mappingFunction(location_1.dimension, location_1.dimension),
@@ -359,50 +359,72 @@ function scan(matrix, options) {
                         bottomRightAlignmentPattern: location_1.alignmentPattern,
                     } });
             }
-            return {
-                binaryData: decoded.bytes,
-                data: decoded.text,
-                chunks: decoded.chunks,
-                version: decoded.version,
-                managementCode: decoded.managementCode,
-                location: {
-                    topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
-                    topLeftCorner: extracted.mappingFunction(0, 0),
-                    bottomRightCorner: extracted.mappingFunction(location_1.dimension, location_1.dimension),
-                    bottomLeftCorner: extracted.mappingFunction(0, location_1.dimension),
-                    topRightFinderPattern: location_1.topRight,
-                    topLeftFinderPattern: location_1.topLeft,
-                    bottomLeftFinderPattern: location_1.bottomLeft,
-                    bottomRightAlignmentPattern: location_1.alignmentPattern,
-                },
-                matrix: matrix,
-            };
+            else {
+                res = {
+                    binaryData: decoded.bytes,
+                    data: decoded.text,
+                    chunks: decoded.chunks,
+                    version: decoded.version,
+                    managementCode: decoded.managementCode,
+                    location: {
+                        topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
+                        topLeftCorner: extracted.mappingFunction(0, 0),
+                        bottomRightCorner: extracted.mappingFunction(location_1.dimension, location_1.dimension),
+                        bottomLeftCorner: extracted.mappingFunction(0, location_1.dimension),
+                        topRightFinderPattern: location_1.topRight,
+                        topLeftFinderPattern: location_1.topLeft,
+                        bottomLeftFinderPattern: location_1.bottomLeft,
+                        bottomRightAlignmentPattern: location_1.alignmentPattern,
+                    },
+                    matrix: matrix,
+                };
+            }
+            if (options && options.multi) {
+                results.push(res); // ★ multiモードなら配列に追加して続行
+            }
+            else {
+                return res; // ★ 従来通り1つ目で終了
+            }
         }
+    }
+    if (options && options.multi) {
+        return results.length > 0 ? results : null; // ★ multiモードなら配列を返す
     }
     return null;
 }
-var defaultOptions = {
-    inversionAttempts: "attemptBoth",
-};
+var defaultOptions = { inversionAttempts: "attemptBoth" };
 function jsQR(data, width, height, providedOptions) {
     if (providedOptions === void 0) { providedOptions = {}; }
     var options = {
         inversionAttempts: providedOptions.inversionAttempts || defaultOptions.inversionAttempts,
         appEncMask: providedOptions.appEncMask,
-        extractRawOnly: providedOptions.extractRawOnly
+        extractRawOnly: providedOptions.extractRawOnly,
+        multi: providedOptions.multi
     };
     var shouldInvert = options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst";
     var tryInvertedFirst = options.inversionAttempts === "onlyInvert" || options.inversionAttempts === "invertFirst";
     var _a = binarizer_1.binarize(data, width, height, shouldInvert), binarized = _a.binarized, inverted = _a.inverted;
     var result = scan(tryInvertedFirst ? inverted : binarized, options);
+    // ★ multiモード時の両面スキャン統合ロジック
+    if (options.multi) {
+        var allResults = result ? result : [];
+        if (options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst") {
+            var result2 = scan(tryInvertedFirst ? binarized : inverted, options);
+            if (result2) {
+                allResults = allResults.concat(result2);
+            }
+        }
+        return allResults.length > 0 ? allResults : null;
+    }
     if (!result && (options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst")) {
         result = scan(tryInvertedFirst ? binarized : inverted, options);
     }
     return result;
 }
 jsQR.default = jsQR;
-// ★ require() をやめて、上部でインポートした関数を直接使うように変更！
 jsQR.resumeDecode = function (rawData, appMask) {
+    if (!rawData)
+        return null;
     return decoder_1.resumeDecode(rawData, appMask);
 };
 exports.default = jsQR;
@@ -10099,35 +10121,39 @@ function locate(matrix) {
     if (finderPatternGroups.length === 0) {
         return null;
     }
-    var _a = reorderFinderPatterns(finderPatternGroups[0].points[0], finderPatternGroups[0].points[1], finderPatternGroups[0].points[2]), topRight = _a.topRight, topLeft = _a.topLeft, bottomLeft = _a.bottomLeft;
-    var alignment = findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft);
     var result = [];
-    if (alignment) {
-        result.push({
-            alignmentPattern: { x: alignment.alignmentPattern.x, y: alignment.alignmentPattern.y },
-            bottomLeft: { x: bottomLeft.x, y: bottomLeft.y },
-            dimension: alignment.dimension,
-            topLeft: { x: topLeft.x, y: topLeft.y },
-            topRight: { x: topRight.x, y: topRight.y },
-        });
-    }
-    // We normally use the center of the quads as the location of the tracking points, which is optimal for most cases and will account
-    // for a skew in the image. However, In some cases, a slight skew might not be real and instead be caused by image compression
-    // errors and/or low resolution. For those cases, we'd be better off centering the point exactly in the middle of the black area. We
-    // compute and return the location data for the naively centered points as it is little additional work and allows for multiple
-    // attempts at decoding harder images.
-    var midTopRight = recenterLocation(matrix, topRight);
-    var midTopLeft = recenterLocation(matrix, topLeft);
-    var midBottomLeft = recenterLocation(matrix, bottomLeft);
-    var centeredAlignment = findAlignmentPattern(matrix, alignmentPatternQuads, midTopRight, midTopLeft, midBottomLeft);
-    if (centeredAlignment) {
-        result.push({
-            alignmentPattern: { x: centeredAlignment.alignmentPattern.x, y: centeredAlignment.alignmentPattern.y },
-            bottomLeft: { x: midBottomLeft.x, y: midBottomLeft.y },
-            topLeft: { x: midTopLeft.x, y: midTopLeft.y },
-            topRight: { x: midTopRight.x, y: midTopRight.y },
-            dimension: centeredAlignment.dimension,
-        });
+    // ★ 変更点：最初の1つだけでなく、見つかったすべてのQRコード候補を処理するループ
+    for (var _i = 0, finderPatternGroups_1 = finderPatternGroups; _i < finderPatternGroups_1.length; _i++) {
+        var group = finderPatternGroups_1[_i];
+        var _a = reorderFinderPatterns(group.points[0], group.points[1], group.points[2]), topRight = _a.topRight, topLeft = _a.topLeft, bottomLeft = _a.bottomLeft;
+        var alignment = findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft);
+        if (alignment) {
+            result.push({
+                alignmentPattern: { x: alignment.alignmentPattern.x, y: alignment.alignmentPattern.y },
+                bottomLeft: { x: bottomLeft.x, y: bottomLeft.y },
+                dimension: alignment.dimension,
+                topLeft: { x: topLeft.x, y: topLeft.y },
+                topRight: { x: topRight.x, y: topRight.y },
+            });
+        }
+        // We normally use the center of the quads as the location of the tracking points, which is optimal for most cases and will account
+        // for a skew in the image. However, In some cases, a slight skew might not be real and instead be caused by image compression
+        // errors and/or low resolution. For those cases, we'd be better off centering the point exactly in the middle of the black area. We
+        // compute and return the location data for the naively centered points as it is little additional work and allows for multiple
+        // attempts at decoding harder images.
+        var midTopRight = recenterLocation(matrix, topRight);
+        var midTopLeft = recenterLocation(matrix, topLeft);
+        var midBottomLeft = recenterLocation(matrix, bottomLeft);
+        var centeredAlignment = findAlignmentPattern(matrix, alignmentPatternQuads, midTopRight, midTopLeft, midBottomLeft);
+        if (centeredAlignment) {
+            result.push({
+                alignmentPattern: { x: centeredAlignment.alignmentPattern.x, y: centeredAlignment.alignmentPattern.y },
+                bottomLeft: { x: midBottomLeft.x, y: midBottomLeft.y },
+                topLeft: { x: midTopLeft.x, y: midTopLeft.y },
+                topRight: { x: midTopRight.x, y: midTopRight.y },
+                dimension: centeredAlignment.dimension,
+            });
+        }
     }
     if (result.length === 0) {
         return null;

@@ -42,7 +42,7 @@
         <div style="background: #1e1e1e; padding: 20px; border-radius: 8px; width: 80%; max-width: 400px; text-align: center; border: 1px solid #333;">
             <h3 style="color: #03DAC6; margin-top: 0;">🔒 パスワード入力</h3>
             <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 20px;">
-                第2のQRコードのRAWデータを確保しました！<br>復号するためのパスワードを入力してください。
+                QRツインを検出しました。<br>復号するためのパスワードを入力してください。
             </p>
             <input type="password" id="appPasswordInput" placeholder="パスワード" style="width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 4px; border: 1px solid #555; background: #2c2c2c; color: #fff; box-sizing: border-box; font-size: 1rem;">
             <button onclick="submitPassword()" style="background: #00E676; color: #000; width: 100%; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 1.1rem; border: none;">一瞬で復号する</button>
@@ -63,7 +63,7 @@
     </div>
 
     <div class="status-panel" id="statusPanel">
-        <div id="detectorInfo" style="font-size: 0.8rem; color: #03DAC6; margin-bottom: 10px; font-weight: bold;">⚡ エンジン: 爆速RAW抽出モード</div>
+        <div id="detectorInfo" style="font-size: 0.8rem; color: #03DAC6; margin-bottom: 10px; font-weight: bold;">⚡ エンジン: カスタム jsQR (ネイティブ・マルチリード対応)</div>
         <div class="qr-result qr-1">
             <strong>1個目:</strong> <span id="text1">未検出</span><br>
             <span style="font-size: 0.85em; color: #ccc;">管理部16bit: <span id="mg1">--</span></span>
@@ -88,7 +88,7 @@
     </div>
 
 <script>
-    // --- SHA-256関数（変更なし） ---
+    // --- SHA-256関数（省略せずそのまま） ---
     function sha256Bytes(msgBytes){
         const K = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
         function rotr(x,n){ return (x>>>n) | (x<<(32-n)); }
@@ -132,8 +132,7 @@
     
     let appPassword = null;
     let appMask = null;
-    let savedSecondQrRawData = null;
-    let savedSecondQrPoints = null;
+    let savedRawCandidates = []; // パスワード入力待ちのRAWデータ配列
 
     async function startApp() {
         document.getElementById('startBtn').disabled = true;
@@ -168,7 +167,7 @@
         requestAnimationFrame(scanLoop);
     }
 
-    // ★ 抽出済みのRAWデータをパスワードで一瞬で復号する
+    // パスワード入力後、保存しておいた全てのRAWデータに対して復号を試す
     function submitPassword() {
         const pw = document.getElementById('appPasswordInput').value;
         if (!pw) return;
@@ -176,23 +175,43 @@
         appPassword = pw;
         appMask = deriveEncryptionMaskBytes(appPassword, 5000);
 
-        if (savedSecondQrRawData) {
-            const decoded = jsQR.resumeDecode(savedSecondQrRawData, Array.from(appMask));
+        if (savedRawCandidates && savedRawCandidates.length > 0) {
+            let success = false;
+            for (let i = 0; i < savedRawCandidates.length; i++) {
+                const candidateRaw = savedRawCandidates[i];
+                const decoded = jsQR.resumeDecode(candidateRaw, Array.from(appMask));
+                
+                if (decoded) {
+                    secondQR = { 
+                        text: decoded.text, 
+                        managementCode: decoded.managementCode, 
+                        points: getPts(candidateRaw), 
+                        center: getCenter(getPts(candidateRaw)) 
+                    };
+                    success = true;
+                    break;
+                }
+            }
             
-            if (decoded) {
-                secondQR = { text: decoded.text, managementCode: decoded.managementCode, points: savedSecondQrPoints, center: getCenter(savedSecondQrPoints) };
+            if (success) {
                 updateUI();
                 document.getElementById('passwordScreen').style.display = 'none';
                 showResultScreen();
-            } else {
-                alert("パスワードが間違っているか、復号に失敗しました。");
-                appPassword = null; appMask = null;
+                return;
             }
         }
+        
+        // パスワード間違い、またはそのフレームに2個目がいなかった場合、記憶したままスキャン再開！
+        document.getElementById('passwordScreen').style.display = 'none';
+        document.getElementById('detectorInfo').innerText = "第2のQRコードを探しています... (カメラを少し動かしてください)";
+        isScanning = true;
+        lastDetectTime = Date.now(); 
+        requestAnimationFrame(scanLoop);
     }
 
-    function getPts(code) {
-        return [code.location.topLeftCorner, code.location.topRightCorner, code.location.bottomRightCorner, code.location.bottomLeftCorner];
+    function getPts(obj) {
+        if (!obj || !obj.location) return [];
+        return [obj.location.topLeftCorner, obj.location.topRightCorner, obj.location.bottomRightCorner, obj.location.bottomLeftCorner];
     }
 
     function getCenter(points) {
@@ -202,33 +221,6 @@
     }
 
     function getDistance(p1, p2) { return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2)); }
-
-    // ━━ ファインダパターン中心座標と半径を計算して塗り潰す ━━
-    // ファインダパターンは 7×7モジュール。モジュールサイズ = 2コーナー間距離 / (dimension-1)
-    // location.topLeft/topRight/bottomLeft はファインダパターン中心座標
-    function blotFinderPatterns(ctx, loc) {
-        const tl = loc.topLeftFinderPattern   || loc.topLeftCorner;
-        const tr = loc.topRightFinderPattern  || loc.topRightCorner;
-        const bl = loc.bottomLeftFinderPattern || loc.bottomLeftCorner;
-
-        // モジュールサイズ推定: TL→TR間の距離 ÷ (QRのモジュール列数-1)
-        // ファインダパターン間の距離は (version*4+10) - 7 = (version*4+3) モジュール相当
-        // 簡易推定: TL→TR距離を使いモジュールサイズを算出
-        const distTLTR = Math.hypot(tr.x - tl.x, tr.y - tl.y);
-        const distTLBL = Math.hypot(bl.x - tl.x, bl.y - tl.y);
-        // ファインダパターン中心間距離は (dim - 7) モジュール ≈ dim * 0.82 程度
-        // 精密な値は不要。塗り潰し半径 = 推定モジュールサイズ × 4.5（余裕を持って7モジュール/2 + マージン）
-        // 距離が大きい方 ÷ 推定dim でモジュールサイズを求める
-        const estModuleSize = Math.max(distTLTR, distTLBL) / 25; // version1=21×21, version2=25×25... おおよそ
-        const r = Math.max(estModuleSize * 4.5, 20); // 最低20pxは塗る
-
-        ctx.fillStyle = '#FFFFFF';
-        [tl, tr, bl].forEach(fp => {
-            ctx.beginPath();
-            ctx.arc(fp.x, fp.y, r, 0, Math.PI * 2);
-            ctx.fill();
-        });
-    }
 
     async function scanLoop() {
         if (!isScanning) return;
@@ -244,6 +236,7 @@
         if (!isProcessing && now - lastDetectTime > SCAN_INTERVAL_MS && video.readyState >= 2) {
             isProcessing = true;
             lastDetectTime = now;
+            let detectedItems = [];
 
             try {
                 zxingCanvas.width = overlayCanvas.width;
@@ -251,47 +244,50 @@
                 zxingCtx.drawImage(video, 0, 0, zxingCanvas.width, zxingCanvas.height);
                 const imageData = zxingCtx.getImageData(0, 0, zxingCanvas.width, zxingCanvas.height);
 
-                // ① 通常スキャンで1個目を読む
-                const code1 = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
+                // ★ 重い処理を全廃止！ { multi: true } で画像内の「全て」のQRを一瞬で抽出！
+                const rawItems = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth", extractRawOnly: true, multi: true });
 
-                if (code1) {
-                    const mgmtStr = code1.managementCode !== undefined ? code1.managementCode.toString(2).padStart(16, '0') : "0000000000000000";
-
-                    // 暗号化フラグON（QRツインの1個目）の場合
-                    if (mgmtStr[7] === '1') {
-                        if (!appPassword && document.getElementById('passwordScreen').style.display !== 'flex') {
-
-                            // UI更新
-                            firstQR = { text: code1.data, managementCode: code1.managementCode, points: getPts(code1), center: getCenter(getPts(code1)) };
-                            updateUI();
-
-                            // ② 1個目のファインダパターンをモジュールサイズに基づいた正確な半径で完全に塗り潰す
-                            blotFinderPatterns(zxingCtx, code1.location);
-
-                            const imageData2 = zxingCtx.getImageData(0, 0, zxingCanvas.width, zxingCanvas.height);
-
-                            // ③ ファインダパターンを潰した画像で2個目のRAWデータのみを抽出
-                            const code2Raw = jsQR(imageData2.data, imageData2.width, imageData2.height, { inversionAttempts: "attemptBoth", extractRawOnly: true });
-
-                            if (code2Raw && code2Raw.codewords) {
-                                // RAWデータ確保！パスワード入力画面へ
-                                savedSecondQrRawData = code2Raw;
-                                savedSecondQrPoints = getPts(code2Raw);
-                                showPasswordScreen();
-                                isProcessing = false;
-                                return;
-                            } else {
-                                document.getElementById('detectorInfo').innerText = "第2のQRコードを探しています... (カメラを少し動かしてください)";
+                if (rawItems && rawItems.length > 0) {
+                    for (const raw of rawItems) {
+                        // まずはマスクなし（通常）で復号を試す
+                        const decodedNormal = jsQR.resumeDecode(raw, null);
+                        
+                        if (decodedNormal) {
+                            const mgmtStr = decodedNormal.managementCode !== undefined ? decodedNormal.managementCode.toString(2).padStart(16, '0') : "0000000000000000";
+                            
+                            // 暗号化フラグON（QRツインの1個目） かつ パスワード未入力の場合
+                            if (mgmtStr[7] === '1') {
+                                if (!appPassword && document.getElementById('passwordScreen').style.display !== 'flex') {
+                                    firstQR = { text: decodedNormal.text, managementCode: decodedNormal.managementCode, points: getPts(raw), center: getCenter(getPts(raw)) };
+                                    updateUI();
+                                    
+                                    // このフレームで見つかった全RAWデータを保管しておく（一瞬復号のため）
+                                    savedRawCandidates = rawItems;
+                                    
+                                    showPasswordScreen();
+                                    isProcessing = false;
+                                    return;
+                                }
+                            }
+                            
+                            // すでに同じ内容が登録されていなければ追加
+                            if (!detectedItems.some(i => i.text === decodedNormal.text)) {
+                                detectedItems.push({ text: decodedNormal.text, managementCode: decodedNormal.managementCode, points: getPts(raw), center: getCenter(getPts(raw)) });
                             }
                         }
-                    } else {
-                        // 通常のQRコード（暗号化フラグなし）
-                        firstQR = { text: code1.data, managementCode: code1.managementCode, points: getPts(code1), center: getCenter(getPts(code1)) };
-                        updateUI();
+                        
+                        // パスワード入力済みなら、マスクありでの復号も試す
+                        if (appMask) {
+                            const decodedMasked = jsQR.resumeDecode(raw, Array.from(appMask));
+                            if (decodedMasked && !detectedItems.some(i => i.text === decodedMasked.text)) {
+                                detectedItems.push({ text: decodedMasked.text, managementCode: decodedMasked.managementCode, points: getPts(raw), center: getCenter(getPts(raw)) });
+                            }
+                        }
                     }
                 }
             } catch (err) { console.warn('scan error:', err); }
 
+            processDetections(detectedItems);
             isProcessing = false;
         }
 
@@ -301,6 +297,33 @@
             return;
         }
         requestAnimationFrame(scanLoop);
+    }
+
+    function processDetections(items) {
+        if (items.length === 0) return;
+
+        if (items.length >= 2) {
+            if (!firstQR) { firstQR = items[0]; secondQR = items[1]; updateUI(); return; }
+            if (firstQR && !secondQR) {
+                const dist0 = getDistance(firstQR.center, items[0].center);
+                const dist1 = getDistance(firstQR.center, items[1].center);
+                if (dist0 > dist1) { secondQR = items[0]; firstQR = items[1]; } else { secondQR = items[1]; firstQR = items[0]; }
+                updateUI(); return;
+            }
+        }
+        if (items.length === 1) {
+            const item = items[0];
+            if (!firstQR) { firstQR = item; updateUI(); } 
+            else if (!secondQR) {
+                if (item.text !== firstQR.text) { secondQR = item; updateUI(); } 
+                else {
+                    const dist = getDistance(firstQR.center, item.center);
+                    const qrSize = getDistance(item.points[0], item.points[1]);
+                    if (dist > Math.min(overlayCanvas.width * 0.1, qrSize * 0.45)) { secondQR = item; updateUI(); } 
+                    else { firstQR.points = item.points; firstQR.center = item.center; }
+                }
+            }
+        }
     }
 
     function updateUI() {
@@ -332,10 +355,10 @@
 
     function goBack() {
         firstQR = null; secondQR = null; appPassword = null; appMask = null;
-        savedSecondQrRawData = null; savedSecondQrPoints = null; 
+        savedRawCandidates = []; 
         document.getElementById('text1').innerText = "未検出"; document.getElementById('text2').innerText = "未検出";
         document.getElementById('mg1').innerText = "--"; document.getElementById('mg2').innerText = "--";
-        document.getElementById('detectorInfo').innerText = "⚡ エンジン: 爆速RAW抽出モード";
+        document.getElementById('detectorInfo').innerText = "⚡ エンジン: カスタム jsQR (ネイティブ・マルチリード対応)";
         document.getElementById('resultScreen').style.display = 'none';
         document.getElementById('cameraContainer').style.display = 'block';
         document.getElementById('statusPanel').style.display = 'block';
